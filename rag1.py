@@ -55,26 +55,3 @@ urls = [
     "https://lilianweng.github.io/posts/2023-03-15-prompt-engineering/",
     "https://lilianweng.github.io/posts/2023-10-25-adv-attack-llm/",
 ]
-
-docs=[WebBaseLoader(url).load() for url in urls]
-docs_list=[item for sublist in docs for item in sublist]
-text_splitter=RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-    chunk_size=100,
-    chunk_overlap=50
-)
-docs_splits=text_splitter.split_documents(docs_list)
-vectortore=Chroma.from_documents(
-    documents=docs_splits,
-    collection_name='rag_chroma',
-    embedding=embedding_model
-)
-retriever=vectortore.as_retriever()
-
-retriever_tool = create_retriever_tool(
-    retriever,
-    "retrieve_blog_posts",
-    "Search and return information about Lilian Weng blog posts on LLM agents, prompt engineering, and adversarial attacks on LLMs.",
-)
-
-class State(TypedDict):
-    
