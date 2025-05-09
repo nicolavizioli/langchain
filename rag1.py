@@ -1,50 +1,34 @@
-from typing_extensions import TypedDict
-from langgraph.graph import StateGraph, START, END
-from IPython.display import Image, display
-from dotenv import load_dotenv
 import os
-import ast
-from langchain_openai import AzureChatOpenAI
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from typing import List
 
-from langchain_community.tools.tavily_search import TavilySearchResults
-from typing import Annotated, List, Sequence
-import operator
-
-from langchain.chat_models import init_chat_model
-from langchain_core.messages import BaseMessage
-from typing_extensions import TypedDict
-
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
-
-from typing_extensions import Literal
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from pydantic import BaseModel, Field
-from langgraph.constants import Send
-
-from langchain.tools.retriever import create_retriever_tool
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
+from dotenv import load_dotenv
 from langchain import hub
+from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_openai import AzureChatOpenAI
+from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field
+from typing_extensions import Literal, TypedDict
 
 load_dotenv()
 
 chat = AzureChatOpenAI(
-    azure_endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),  # Use azure_endpoint instead of openai_api_base
-    openai_api_version=os.getenv('OPENAI_API_VERSION'),
-    deployment_name=os.getenv('OPENAI_LLM_DEPLOYMENT_NAME'),  # deployment_name is fine
-    openai_api_key=os.getenv('AZURE_OPENAI_API_KEY'),
-    openai_api_type=os.getenv('OPENAI_API_TYPE'),
+    azure_endpoint=os.getenv(
+        "AZURE_OPENAI_ENDPOINT"
+    ),  # Use azure_endpoint instead of openai_api_base
+    openai_api_version=os.getenv("OPENAI_API_VERSION"),
+    deployment_name=os.getenv("OPENAI_LLM_DEPLOYMENT_NAME"),  # deployment_name is fine
+    openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    openai_api_type=os.getenv("OPENAI_API_TYPE"),
 )
 
 embedding_model = GoogleGenerativeAIEmbeddings(
-    model="models/text-embedding-004",
-    google_api_key=os.getenv("GOOGLE_API_KEY")
+    model="models/text-embedding-004", google_api_key=os.getenv("GOOGLE_API_KEY")
 )
 
-llm=chat
+llm = chat
 
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.vectorstores import Chroma
@@ -56,24 +40,18 @@ urls = [
     "https://lilianweng.github.io/posts/2023-10-25-adv-attack-llm/",
 ]
 
-docs=[WebBaseLoader(url).load() for url in urls]
-docs_list=[item for sublist in docs for item in sublist]
-text_splitter=RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-    chunk_size=500,
-    chunk_overlap=0
+docs = [WebBaseLoader(url).load() for url in urls]
+docs_list = [item for sublist in docs for item in sublist]
+text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+    chunk_size=500, chunk_overlap=0
 )
 
-docs_split=text_splitter.split_documents(docs_list)
-vectorstore=Chroma.from_documents(
-    documents=docs_split,
-    collection_name="rag-chroma",
-    embedding=embedding_model
+docs_split = text_splitter.split_documents(docs_list)
+vectorstore = Chroma.from_documents(
+    documents=docs_split, collection_name="rag-chroma", embedding=embedding_model
 )
 
 retriever = vectorstore.as_retriever()
-
-
-
 
 
 # Data model
@@ -86,7 +64,7 @@ class RouteQuery(BaseModel):
     )
 
 
-llm=chat
+llm = chat
 structured_llm_router = llm.with_structured_output(RouteQuery)
 
 # Prompt
@@ -108,20 +86,25 @@ print(
 )
 print(question_router.invoke({"question": "What are the types of agent memory?"}))
 
+
 class GradeDocuments(BaseModel):
     """Binary score for relevance check on retrieved documents."""
 
     binary_score: str = Field(
         description="Documents are relevant to the question, 'yes' or 'no'"
     )
-structured_llm_grader = llm.with_structured_output(GradeDocuments)  ####se invocato llm risponderà seguendo il formato di GradeDocumnts
+
+
+structured_llm_grader = llm.with_structured_output(
+    GradeDocuments
+)  ####se invocato llm risponderà seguendo il formato di GradeDocumnts
 
 # Prompt
 system = """You are a grader assessing relevance of a retrieved document to a user question. \n 
     If the document contains keyword(s) or semantic meaning related to the user question, grade it as relevant. \n
     It does not need to be a stringent test. The goal is to filter out erroneous retrievals. \n
     Give a binary score 'yes' or 'no' score to indicate whether the document is relevant to the question."""
-    
+
 grade_prompt = ChatPromptTemplate.from_messages(
     [
         ("system", system),
@@ -137,8 +120,6 @@ print(retrieval_grader.invoke({"question": question, "document": doc_txt}))
 
 ### Generate
 
-from langchain import hub
-from langchain_core.output_parsers import StrOutputParser
 
 # Prompt
 prompt = hub.pull("rlm/rag-prompt")
@@ -149,7 +130,9 @@ llm = chat
 
 # Post-processing
 def format_docs(docs):
-    return "\n\n".join(doc.page_content for doc in docs)  # docs = retriever.invoke(question)
+    return "\n\n".join(
+        doc.page_content for doc in docs
+    )  # docs = retriever.invoke(question)
 
 
 # Chain
@@ -200,7 +183,6 @@ class GradeAnswer(BaseModel):
     )
 
 
-
 structured_llm_grader = llm.with_structured_output(GradeAnswer)
 
 # Prompt
@@ -235,15 +217,10 @@ re_write_prompt = ChatPromptTemplate.from_messages(
 question_rewriter = re_write_prompt | llm | StrOutputParser()
 question_rewriter.invoke({"question": question})
 
-from langchain_community.tools.tavily_search import TavilySearchResults
 
 web_search_tool = TavilySearchResults(k=3)
 
 from langchain.schema import Document
-
-from typing import List
-
-from typing_extensions import TypedDict
 
 
 class State(TypedDict):
@@ -259,6 +236,7 @@ class State(TypedDict):
     question: str
     generation: str
     documents: List[str]
+
 
 def retrieve(state):
     """
@@ -460,8 +438,7 @@ def grade_generation_v_documents_and_question(state):
     else:
         print("---DECISION: GENERATION IS NOT GROUNDED IN DOCUMENTS, RE-TRY---")
         return "not supported"
-    
-    from langgraph.graph import END, StateGraph, START
+
 
 workflow = StateGraph(State)
 

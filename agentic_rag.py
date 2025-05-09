@@ -1,50 +1,37 @@
-from typing_extensions import TypedDict
-from langgraph.graph import StateGraph, START, END
-from IPython.display import Image, display
-from dotenv import load_dotenv
 import os
-import ast
-from langchain_openai import AzureChatOpenAI
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from typing import Annotated, Sequence
 
-from langchain_community.tools.tavily_search import TavilySearchResults
-from typing import Annotated, List, Sequence
-import operator
-
-from langchain.chat_models import init_chat_model
-from langchain_core.messages import BaseMessage
-from typing_extensions import TypedDict
-
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
-
-from typing_extensions import Literal
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from pydantic import BaseModel, Field
-from langgraph.constants import Send
-
+from dotenv import load_dotenv
+from langchain import hub
 from langchain.tools.retriever import create_retriever_tool
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
-from langchain import hub
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_openai import AzureChatOpenAI
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode, tools_condition
+from pydantic import BaseModel, Field
+from typing_extensions import Literal, TypedDict
 
 load_dotenv()
 
 chat = AzureChatOpenAI(
-    azure_endpoint=os.getenv('AZURE_OPENAI_ENDPOINT'),  # Use azure_endpoint instead of openai_api_base
-    openai_api_version=os.getenv('OPENAI_API_VERSION'),
-    deployment_name=os.getenv('OPENAI_LLM_DEPLOYMENT_NAME'),  # deployment_name is fine
-    openai_api_key=os.getenv('AZURE_OPENAI_API_KEY'),
-    openai_api_type=os.getenv('OPENAI_API_TYPE'),
+    azure_endpoint=os.getenv(
+        "AZURE_OPENAI_ENDPOINT"
+    ),  # Use azure_endpoint instead of openai_api_base
+    openai_api_version=os.getenv("OPENAI_API_VERSION"),
+    deployment_name=os.getenv("OPENAI_LLM_DEPLOYMENT_NAME"),  # deployment_name is fine
+    openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    openai_api_type=os.getenv("OPENAI_API_TYPE"),
 )
 
 embedding_model = GoogleGenerativeAIEmbeddings(
-    model="models/text-embedding-004",
-    google_api_key=os.getenv("GOOGLE_API_KEY")
+    model="models/text-embedding-004", google_api_key=os.getenv("GOOGLE_API_KEY")
 )
 
-llm=chat
+llm = chat
 
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.vectorstores import Chroma
@@ -56,20 +43,18 @@ urls = [
     "https://lilianweng.github.io/posts/2023-10-25-adv-attack-llm/",
 ]
 
-docs=[WebBaseLoader(url).load() for url in urls]
-docs_list=[item for sublist in docs for item in sublist]
-text_splitter=RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+docs = [WebBaseLoader(url).load() for url in urls]
+docs_list = [item for sublist in docs for item in sublist]
+text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
     chunk_size=100, chunk_overlap=50
 )
-docs_splits=text_splitter.split_documents(docs_list)
+docs_splits = text_splitter.split_documents(docs_list)
 
-vectorstore=Chroma.from_documents(
-    documents=docs_splits,
-    collection_name='rag-chroma',
-    embedding=embedding_model
+vectorstore = Chroma.from_documents(
+    documents=docs_splits, collection_name="rag-chroma", embedding=embedding_model
 )
 
-retriever=vectorstore.as_retriever()
+retriever = vectorstore.as_retriever()
 
 
 retriever_tool = create_retriever_tool(
@@ -80,25 +65,29 @@ retriever_tool = create_retriever_tool(
 
 tools = [retriever_tool]
 
+
 class State(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
 
+
 class Grade(BaseModel):
     """Binary score for relevance check."""
-    binary_score: str=Field(description="Relevance score 'yes' or 'no' ")
 
-def grade_documents(state)-> Literal["generate", "rewrite"]:
-    '''
+    binary_score: str = Field(description="Relevance score 'yes' or 'no' ")
+
+
+def grade_documents(state) -> Literal["generate", "rewrite"]:
+    """
     Determines whether the retrieved documents are relevant to the question.
      Args:
         state (messages): The current state
      Returns:
         str: A decision for whether the documents are relevant or not
-    '''
+    """
     print("---CHECK RELEVANCE---")
-    
-    model=llm
-    llm_with_tools=model.with_structured_output(Grade)
+
+    model = llm
+    llm_with_tools = model.with_structured_output(Grade)
     prompt = PromptTemplate(
         template="""You are a grader assessing relevance of a retrieved document to a user question. \n 
         Here is the retrieved document: \n\n {context} \n\n
@@ -107,16 +96,16 @@ def grade_documents(state)-> Literal["generate", "rewrite"]:
         Give a binary score 'yes' or 'no' score to indicate whether the document is relevant to the question.""",
         input_variables=["context", "question"],
     )
-    
-    chain=prompt|llm_with_tools
-    messages=state['messages']
-    
-    last_message=messages[-1]
-    docs=last_message.content
-    question=messages[0].content
-    scored_result=chain.invoke({'question': question, 'context': docs})
-    score=scored_result.binary_score
-    
+
+    chain = prompt | llm_with_tools
+    messages = state["messages"]
+
+    last_message = messages[-1]
+    docs = last_message.content
+    question = messages[0].content
+    scored_result = chain.invoke({"question": question, "context": docs})
+    score = scored_result.binary_score
+
     if score == "yes":
         print("---DECISION: DOCS RELEVANT---")
         return "generate"
@@ -126,7 +115,9 @@ def grade_documents(state)-> Literal["generate", "rewrite"]:
         print(score)
         return "rewrite"
 
+
 ### Nodes
+
 
 def agent(state):
     """
@@ -140,13 +131,11 @@ def agent(state):
         dict: The updated state with the agent response appended to messages
     """
     print("---CALL AGENT---")
-    messages=state['messages']
-    model=llm
-    model=llm.bind_tools(tools)
-    response=model.invoke(messages)
-    return {
-        'messages': [response]
-    }
+    messages = state["messages"]
+    model = llm
+    model = llm.bind_tools(tools)
+    response = model.invoke(messages)
+    return {"messages": [response]}
 
 
 def rewrite(state):
@@ -181,6 +170,7 @@ def rewrite(state):
     response = model.invoke(msg)
     return {"messages": [response]}
 
+
 def generate(state):
     """
     Generate answer
@@ -209,7 +199,7 @@ def generate(state):
         return "\n\n".join(doc.page_content for doc in docs)
 
     # Chain
-    rag_chain = prompt | model| StrOutputParser()
+    rag_chain = prompt | model | StrOutputParser()
 
     # Run
     response = rag_chain.invoke({"context": docs, "question": question})
