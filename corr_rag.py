@@ -12,9 +12,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_openai import AzureChatOpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
-from langgraph.graph import END, StateGraph, START
 
 load_dotenv()
 
@@ -158,7 +158,7 @@ def generate(state):
 
 def grade_documents(state):
     """
-    Determine whether retrived documents are relevants
+    Determine whether retrieved documents are relevant
     Args:
         state(dict): the current state of the graph
     Return:
@@ -181,6 +181,7 @@ def grade_documents(state):
             print("---GRADE: DOCUMENT NOT RELEVANT---")
             web_search = "yes"
             continue
+    return {"documents": filtered_docs, "question": question, "web_search": web_search}
 
 
 def transform_query(state):
@@ -200,48 +201,87 @@ def transform_query(state):
 
 
 def web_search(state):
-    """
-    web search based on optimized question
-    Args:
-        state(dict): the current state of the graph
-    Returns:
-        state(dict): Updates documents key with appended web results
-    """
     print("---WEB SEARCH---")
 
-    # web_search_tool = TavilySearchResults(k=3)
     question = state["question"]
     documents = state["documents"]
 
     docs = web_search_tool.invoke({"query": question})
-    web_results = "\n".join([d["content"] for d in docs])
-    web_results = Document(page_content=web_results)
-    documents.append(web_results)
+    print("Web search results:", docs)
+
+    if not docs:
+        print("---NO WEB RESULTS FOUND---")
+    else:
+        web_docs = [Document(page_content=d["content"]) for d in docs if "content" in d]
+        documents.extend(web_docs)
+
     return {"documents": documents, "question": question}
 
-'''EDGES'''
+
+"""EDGES"""
+
 
 def decide_to_generate(state):
-    '''
+    """
     determine whether to generate an answer or regenerate a question
-    Args: 
+    Args:
         state(dict): the current state of the graph
     Returns:
         str: Binary decision for next node to call
-    '''
+    """
 
-    print ('---ASSESS GRADED DOCUMENTS---')
-    state['question']
-    web_search=state['web_search']
-    state['documents']
-    
-    if web_search=='yes':
+    print("---ASSESS GRADED DOCUMENTS---")
+    state["question"]
+    web_search = state["web_search"]
+    state["documents"]
+
+    if web_search == "yes":
         print(
-            '---no documents relevant for the quetion: reformulate quetion for web search'
+            "---no documents relevant for the quetion: reformulate quetion for web search"
         )
-        return 'transform_query'
+        return "transform_query"
     else:
-        print('---Generate---')
-        return 'generate'
+        print("---Generate---")
+        return "generate"
 
-workflow=
+
+workflow = StateGraph(GraphState)
+workflow.add_node("retrieve", retrieve)  # retrieve
+workflow.add_node("grade_documents", grade_documents)  # grade documents
+workflow.add_node("generate", generate)  # generate
+workflow.add_node("transform_query", transform_query)  # transform_query
+workflow.add_node("web_search_node", web_search)  # web search
+
+
+# Build graph
+workflow.add_edge(START, "retrieve")
+workflow.add_edge("retrieve", "grade_documents")
+workflow.add_conditional_edges(
+    "grade_documents",
+    decide_to_generate,
+    {
+        "transform_query": "transform_query",
+        "generate": "generate",
+    },
+)
+workflow.add_edge("transform_query", "web_search_node")
+workflow.add_edge("web_search_node", "generate")
+workflow.add_edge("generate", END)
+
+# Compile
+app = workflow.compile()
+
+from pprint import pprint
+
+# Run
+inputs = {"question": "How does causal forest work?"}
+for output in app.stream(inputs):
+    for key, value in output.items():
+        # Node
+        pprint(f"Node '{key}':")
+        # Optional: print full state at each node
+        # pprint.pprint(value["keys"], indent=2, width=80, depth=None)
+    pprint("\n---\n")
+
+# Final generation
+pprint(value["generation"])
